@@ -19,23 +19,27 @@ MESSAGE_COUNT = 0
 
 def register():
     try:
-        response = requests.post(f"{DISTRIBUTOR_URL}/register_analyzer", json={"id":  ANALYZER_NAME, "weight": ANALYZER_WEIGHT, "port": 3000 + ANALYZER_ID})
+        response = requests.post(f"{DISTRIBUTOR_URL}/analyzer/register", json={
+            'id': ANALYZER_NAME, 
+            'weight': ANALYZER_WEIGHT, 
+            'port': 3000 + ANALYZER_ID
+            })
         response.raise_for_status()
         app.logger.info(f"Registered analyzer with id={ANALYZER_NAME} with Distributor.")
     except requests.exceptions.RequestException as e:
-        app.logger.error(f"Error sending message to analyzer {id}: {e}")
+        app.logger.error(f"Error registering analyzer {id} with Distributor: {e}")
 
 def deregister():
     try:
-        response = requests.post(f"{DISTRIBUTOR_URL}/deregister_analyzer", json={"id":  ANALYZER_NAME})
+        response = requests.post(f"{DISTRIBUTOR_URL}/analyzer/deregister", json={"id":  ANALYZER_NAME})
         response.raise_for_status()
         app.logger.info(f"De-registered analyzer with id={ANALYZER_NAME} with Distributor. Total messages received = {MESSAGE_COUNT}")
     except requests.exceptions.RequestException as e:
-        app.logger.error(f"Error sending message to analyzer {id}: {e}")
+        app.logger.error(f"Error de-registering analyzer {id} with Distributor: {e}")
 
 
-@app.route('/receive_message', methods=['POST'])
-def receive_message():
+@app.route('/message/process', methods=['POST'])
+def process():
     global MESSAGE_COUNT
 
     message_data = request.get_json()
@@ -50,14 +54,15 @@ def receive_message():
 
     return jsonify({'status': 'Message processed'}), 200 
 
-if __name__ == '__main__':
+
+if __name__ == '__main__':    
     # Register Analyzer with Distributor on startup
     register()
-
+    
     """
     When the docker container is stopped, Docker sends a SIGTERM signal to the analyzer container's process.  
     This triggers the shutdown hook, executing the deregistration call.
     """
     atexit.register(deregister)
-    
-    app.run(host='0.0.0.0', port=3000 + int(ANALYZER_ID), debug=True) 
+
+    app.run(host='0.0.0.0', port=3000 + int(ANALYZER_ID), debug=False)

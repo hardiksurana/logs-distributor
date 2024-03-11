@@ -10,10 +10,5 @@ class LogMessageSender(HttpUser):
 
     @task
     def send_log_message(self):
-        message_data = {
-            "timestamp": int(time.time()),  # Simplified
-            "severity": random.choice(SEVERITIES),
-            "source": random.choice(SOURCES),
-            "message": f"Sample Log Event - Locust Test" 
-        }
-        self.client.post("/send_message", json=message_data)
+        message_data = { "timestamp": int(time.time()),  "severity": random.choice(SEVERITIES), "source": random.choice(SOURCES), "message": f"hello world!" }
+        self.client.post("/message/send", json=message_data)

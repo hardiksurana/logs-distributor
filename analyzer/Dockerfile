@@ -5,6 +5,6 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
-COPY analyzer.py ./ 
- 
+COPY analyzer.py ./
+
 CMD ["python", "analyzer.py"]

@@ -9,4 +9,4 @@ COPY distributor.py app.py ./
 
 EXPOSE 3000
 
-CMD ["python", "app.py"]
+CMD ["gunicorn", "app:app", "--worker-class", "gevent", "-w", "4", "-b", "0.0.0.0:3000"]

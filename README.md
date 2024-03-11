@@ -3,6 +3,11 @@
 ## Goal
 The goal is to design a high-throughput logs distributor that will act as an initial receiver of packets of log messages. The distributor receives log message packets from a number of agents that collect and transmit application/infrastructure logs. The distributor fronts several analyzers, each analyzer being assigned a relative weight (e.g. 0.4, 0.3, 0.1, 0.2). The distributor should route log message packets to analyzers, so that eventually each analyzer analyzes a fraction of log messages roughly proportional to their relative weight.
 
+## Features
+- Uses `gunicorn` web server with `gevent` workers for concurrent request handling, cooperative multi-tasking and high-throughput
+- Uses `asyncio` to efficiently handle multiple non-blocking operations in parallel within a single request and respond asynchronously
+- Uses thread `locks` to guard modifications to shared data structures
+
 ## Components:
 - Load Generator: Built using Locust, it supplies the Distributor with an unbounded stream of application/infra logs coming from multiple agents
 - Distributor: A multi-threaded web-server that can perform high-throughput, non-blocking, thread-safe distribution of log messages
@@ -64,11 +69,11 @@ docker run -d --network app-network -p 3000:3000 --name distributor distributor
 docker run -d --network app-network -e ANALYZER_ID={ID} -e -p {INTERNAL_PORT}:{EXTERNAL_PORT} ANALYZER_WEIGHT={WEIGHT} --name analyzer_{ID} analyzer
 ```
 
-Example usage: This will spin up 3 Analyzers with weights ```[0.5, 0.3, 0.2]```
+Example usage: This will spin up 3 Analyzers with weights `[0.5, 0.3, 0.2]`
 ```
 docker run -d --network app-network -e ANALYZER_ID=1 -e ANALYZER_WEIGHT=0.5  -p 3001:3001 --name analyzer_1 analyzer
-docker run -d --network app-network -e ANALYZER_ID=2 -e ANALYZER_WEIGHT=0.3  -p 3002:3002 --name analyzer_2 analyzer
-docker run -d --network app-network -e ANALYZER_ID=3 -e ANALYZER_WEIGHT=0.2  -p 3003:3003 --name analyzer_3 analyzer
+docker run -d --network app-network -e ANALYZER_ID=2 -e ANALYZER_WEIGHT=0.3  -p 3001:3002 --name analyzer_2 analyzer
+docker run -d --network app-network -e ANALYZER_ID=3 -e ANALYZER_WEIGHT=0.2  -p 3001:3003 --name analyzer_3 analyzer
 ```
 
 ## Load Test
@@ -78,13 +83,13 @@ docker run -d --network app-network -e ANALYZER_ID=3 -e ANALYZER_WEIGHT=0.2  -p 
 locust -f ./loadgen/locust.py
 ```
 
-- Open a browser tab at ```http://localhost:8089/```
+- Open a browser tab at `http://localhost:8089/`
 
 - To begin simulating sending of logs, enter the following parameters:
-    - Number of Users (peak concurrency): ```{INTEGER}```
-    - Ramp Up (users started per second): ```{INTEGER}```
-    - Host: ```http://127.0.0.1:3000```
-    - Click ```Start Swarm```
+    - Number of Users (peak concurrency): `{INTEGER}`
+    - Ramp Up (users started per second): `{INTEGER}`
+    - Host: `http://127.0.0.1:3000`
+    - Click `Start Swarm`
 
 <img src="./loadgen/locust_settings.png" alt="locust settings" width="250"/>
 
@@ -108,15 +113,15 @@ docker rm -f $(docker ps -aq)
 ## Manual Testing
 - Once the Distributor and Analyzer(s) are up, if you want to send a single log message to the Distributor:
 ```
-curl -X POST -H "Content-Type: application/json" -d '{"message": "Hello, world!"}' http://127.0.0.1:3000/send_message
+curl -X POST -H "Content-Type: application/json" -d '{ "timestamp": 1020, "severity": "WARN", "source": "app", "message": "hello world!" }' http://127.0.0.1:3000/message/send
 ```
 - To send a fixed number of logs:
 ```
-for i in {1..10}; do; curl -X POST -H "Content-Type: application/json" -d '{"message": "Hello, world - $i!"}' http://127.0.0.1:3000/send_message; done
+for i in {1..100}; do; curl -X POST -H "Content-Type: application/json" -d '{ "timestamp": 1020, "severity": "WARN", "source": "app", "message": "hello world!" }' http://127.0.0.1:3000/message/send ; done
 ```
 - If you want to see the stats of how many messages are sent to an analyzer at any point in time:
 ```
-curl -X GET http://127.0.0.1:3000/analyzer_stats
+curl -X GET http://127.0.0.1:3000/analyzer/stats
 ```
 - If you want to see the logs of any container, run:
 ```
@@ -129,5 +134,5 @@ docker logs {CONTAINER_NAME} --tail=0 --follow
 - Analyzer IDs are unique
 - Even though weights might sum to > 1, they will be normalized proportionately such that all logs are shared based on the relative weights
 - Logs will be distributed based on the analyzers that are "online" at any given point in time. When an new analyzer comes online or an existing analyzer goes offline, the weights are re-adjusted and logs will be distributed based on the new relative weights.
-- Ports assigned to each analyzer is always available and not bound to another process. Port is assigned to an analyzer in the following manner: ```3000 + {ANALYZER_ID}```, and this port is available at analyzer creation time.
-- ```{ANALYZER_ID}``` is an integer and is always ```>= 1```
+- Ports assigned to each analyzer is always available and not bound to another process. Port is assigned to an analyzer in the following manner: `3000 + {ANALYZER_ID}`, and this port is available at analyzer creation time.
+- `{ANALYZER_ID}` is an integer and is always `>= 1`
