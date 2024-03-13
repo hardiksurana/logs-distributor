@@ -1,101 +1,68 @@
-import asyncio
-from gunicorn.app.wsgiapp import WSGIApplication
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status
+from pydantic import BaseModel
 import logging
-from flask import Flask, request, jsonify
 
 from distributor import Distributor
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-app = Flask(__name__)
+app = FastAPI()
 distributor = Distributor()
 
-# async def initialize_app():
-#     try:
-#         app.logger.info("Inside initialize_app()")
-#         await distributor.connect()
-#     except Exception as e:
-#         app.logger.error(f"Error during initialization: {e}")
-#     await distributor.connect()
 
-@app.route('/message/send', methods=['POST'])
-async def send():
-    data = request.get_json()
-    if not data:
-        app.logger.error("Invalid request, missing payload.")
-        return jsonify({'error': 'Invalid request, missing payload.'}), 400
-    
-    # schedules asynchronous message distribution without blocking the main request handling
-    task = asyncio.create_task(distributor.distribute_message_async(data)) 
-    
-    try:
-        await task
-        app.logger.info("Distributed message successfully.")
-        return jsonify({'status': 'Message queued for distribution'}), 200 
-    except asyncio.CancelledError:
-        app.logger.info("Request was cancelled.")
-    
+class SendMessageRequest(BaseModel):
+    timestamp: int
+    severity: str
+    source: str
+    message: str
 
-@app.route('/analyzer/register', methods=['POST'])
-async def register():
-    data = request.get_json()
-    if not data or 'id' not in data or 'weight' not in data or 'port' not in data:
-        app.logger.error("Invalid request, missing a required field.")
-        return jsonify({'error': 'Invalid request, missing a required field'}), 400
+class RegisterAnalyzerRequest(BaseModel):
+    id: str
+    weight: float
+    port: int
+    online: bool = True
 
-    analyzer_id = data.get('id')
-    weight = data.get('weight', 0)
-    port = data.get('port')
-    
-    task = asyncio.create_task(distributor.set_analyzer_async({
-        'id': analyzer_id, 
-        'weight': weight, 
-        'port': port, 
-        'online': True
-        }))
-
-    try:
-        await task
-        app.logger.info(f"Registered analyzer with id={analyzer_id}")
-        return jsonify({'status': 'analyzer {analyzer_id} registered'}), 200 
-    except asyncio.CancelledError:
-        app.logger.info("Request was cancelled.")
+class DeregisterAnalyzerRequest(BaseModel):
+    id: str
+    online: bool = False
 
 
-@app.route('/analyzer/deregister', methods=['POST'])
-async def deregister():
-    data = request.get_json()
-    if not data or 'id' not in data:
-        app.logger.error("Invalid request, missing 'id' field.")
-        return jsonify({'error': 'Invalid request, missing "id" field'}), 400
-
-    analyzer_id = data['id']
-
-    task = asyncio.create_task(distributor.set_analyzer_async({
-        'id': analyzer_id, 
-        'online': False
-        }))
-    
-    try:
-        await task
-        app.logger.info(f"De-registered analyzer with id={analyzer_id}")
-        return jsonify({'status': 'analyzer {analyzer_id} de-registered'}), 200 
-    except asyncio.CancelledError:
-        app.logger.info("Request was cancelled.")
+@app.on_event("startup")
+async def startup_event():
+    await distributor.connect()
 
 
-@app.route('/analyzer/stats', methods=['GET'])
+@app.on_event("shutdown")
+async def shutdown_event():
+    await distributor.close()
+
+
+@app.post('/message/send', status_code=status.HTTP_200_OK)
+async def send(request: SendMessageRequest, background_tasks: BackgroundTasks):
+    if not request:
+        logging.error("Invalid request, missing payload.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request, missing payload.")
+
+    background_tasks.add_task(distributor.distribute_message_async, request.dict())
+    logging.info("Distributed message successfully.")
+    return {"status": "Message queued for distribution"}
+
+
+@app.post('/analyzer/register', status_code=status.HTTP_200_OK)
+async def register(request: RegisterAnalyzerRequest, background_tasks: BackgroundTasks):
+    background_tasks.add_task(distributor.set_analyzer_async, request.dict())
+    logging.info(f"Registered analyzer with id={request.id}")
+    return {"status": f"analyzer {request.id} registered"}
+
+
+@app.post('/analyzer/deregister', status_code=status.HTTP_200_OK)
+async def deregister(request: DeregisterAnalyzerRequest, background_tasks: BackgroundTasks):
+    background_tasks.add_task(distributor.set_analyzer_async, {'id': request.id, 'online': False})
+    logging.info(f"De-registered analyzer with id={request.id}")
+    return {"status": f"analyzer {request.id} de-registered"}
+
+
+@app.get('/analyzer/stats', status_code=status.HTTP_200_OK)
 async def stats():
-    task = asyncio.create_task(distributor.get_distribution_stats())
-    try:
-        data = await task
-        return jsonify(data), 200
-    except asyncio.CancelledError:
-        app.logger.info("Request was cancelled.")
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000, debug=True)
-
-    # server = WSGIApplication("app:app") 
-    # server.run(host="0.0.0.0", port=3000, worker_class="gevent")
+    data = await distributor.get_distribution_stats()
+    return data

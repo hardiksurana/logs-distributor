@@ -52,14 +52,14 @@ def process():
     message = data['data']
     MESSAGE_COUNT += 1
     
-    # Process the message as needed 
+    # process the message as needed 
     app.logger.info(f"Analyzer {ANALYZER_NAME} received message: {message}. Total so far = {MESSAGE_COUNT}")
 
     return jsonify({'status': 'Message processed'}), 200 
 
 
 if __name__ == '__main__':    
-    # Register Analyzer with Distributor on startup
+    # register Analyzer with Distributor on startup
     register()
     
     """

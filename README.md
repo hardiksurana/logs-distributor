@@ -4,9 +4,10 @@
 The goal is to design a high-throughput logs distributor that will act as an initial receiver of packets of log messages. The distributor receives log message packets from a number of agents that collect and transmit application/infrastructure logs. The distributor fronts several analyzers, each analyzer being assigned a relative weight (e.g. 0.4, 0.3, 0.1, 0.2). The distributor should route log message packets to analyzers, so that eventually each analyzer analyzes a fraction of log messages roughly proportional to their relative weight.
 
 ## Features
-- Uses `gunicorn` web server with `gevent` workers for concurrent request handling, cooperative multi-tasking and high-throughput
+- Uses `uvicorn`, an ASGI web server workers for concurrent request handling, cooperative multi-tasking and high-throughput
 - Uses `asyncio` to efficiently handle multiple non-blocking operations in parallel within a single request and respond asynchronously
 - Uses thread `locks` to guard modifications to shared data structures
+- Uses `redis` to maintain shared state among worker threads
 
 ## Components:
 - Load Generator: Built using Locust, it supplies the Distributor with an unbounded stream of application/infra logs coming from multiple agents
