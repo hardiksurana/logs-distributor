@@ -1,12 +1,17 @@
 import asyncio
+from gunicorn.app.wsgiapp import WSGIApplication
 import logging
 from flask import Flask, request, jsonify
+
 from distributor import Distributor
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 app = Flask(__name__)
 distributor = Distributor()
+
+async def initialize_app():
+    await distributor.connect()
 
 @app.route('/message/send', methods=['POST'])
 async def send():
@@ -85,4 +90,10 @@ async def stats():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000, debug=False)
+    # app.run(host='0.0.0.0', port=3000, debug=False)
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(initialize_app())
+
+    server = WSGIApplication("app:app") 
+    server.run(host="0.0.0.0", port=3000, worker_class="gevent")

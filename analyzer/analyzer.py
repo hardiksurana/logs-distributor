@@ -30,6 +30,8 @@ def register():
         app.logger.error(f"Error registering analyzer {id} with Distributor: {e}")
 
 def deregister():
+    global MESSAGE_COUNT
+    
     try:
         response = requests.post(f"{DISTRIBUTOR_URL}/analyzer/deregister", json={"id":  ANALYZER_NAME})
         response.raise_for_status()
@@ -42,11 +44,12 @@ def deregister():
 def process():
     global MESSAGE_COUNT
 
-    message_data = request.get_json()
-    if not message_data or 'message' not in message_data:
+    data = request.get_json()
+    app.logger.info(data)
+    if not data:
         return jsonify({'error': 'Invalid message format'}), 400
 
-    message = message_data['message']
+    message = data['data']
     MESSAGE_COUNT += 1
     
     # Process the message as needed 

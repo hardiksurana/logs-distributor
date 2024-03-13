@@ -59,21 +59,26 @@ docker build -t distributor ./distributor
 docker build -t analyzer ./analyzer
 ```
 
+- Start the redis instance (to store shared state)
+```
+docker run --network app-network --name redis -p 6379:6379 redis
+```
+
 - Start the Distributor (single instance)
 ```
-docker run -d --network app-network -p 3000:3000 --name distributor distributor
+docker run --network app-network -p 3000:3000 --name distributor distributor
 ```
 
 - Spin up as many instances of Analyzer as needed, each as a separate docker container with a unique ID. When an Analyzer is started, it will automatically call the Distributor to register itself with it. Use the following convention:
 ```
-docker run -d --network app-network -e ANALYZER_ID={ID} -e -p {INTERNAL_PORT}:{EXTERNAL_PORT} ANALYZER_WEIGHT={WEIGHT} --name analyzer_{ID} analyzer
+docker run --network app-network -e ANALYZER_ID={ID} -e -p {INTERNAL_PORT}:{EXTERNAL_PORT} ANALYZER_WEIGHT={WEIGHT} --name analyzer_{ID} analyzer
 ```
 
 Example usage: This will spin up 3 Analyzers with weights `[0.5, 0.3, 0.2]`
 ```
-docker run -d --network app-network -e ANALYZER_ID=1 -e ANALYZER_WEIGHT=0.5  -p 3001:3001 --name analyzer_1 analyzer
-docker run -d --network app-network -e ANALYZER_ID=2 -e ANALYZER_WEIGHT=0.3  -p 3001:3002 --name analyzer_2 analyzer
-docker run -d --network app-network -e ANALYZER_ID=3 -e ANALYZER_WEIGHT=0.2  -p 3001:3003 --name analyzer_3 analyzer
+docker run --network app-network -e ANALYZER_ID=1 -e ANALYZER_WEIGHT=0.5  -p 3001:3001 --name analyzer_1 analyzer
+docker run --network app-network -e ANALYZER_ID=2 -e ANALYZER_WEIGHT=0.3  -p 3002:3002 --name analyzer_2 analyzer
+docker run --network app-network -e ANALYZER_ID=3 -e ANALYZER_WEIGHT=0.2  -p 3003:3003 --name analyzer_3 analyzer
 ```
 
 ## Load Test
