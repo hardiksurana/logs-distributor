@@ -10,8 +10,13 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=lo
 app = Flask(__name__)
 distributor = Distributor()
 
-async def initialize_app():
-    await distributor.connect()
+# async def initialize_app():
+#     try:
+#         app.logger.info("Inside initialize_app()")
+#         await distributor.connect()
+#     except Exception as e:
+#         app.logger.error(f"Error during initialization: {e}")
+#     await distributor.connect()
 
 @app.route('/message/send', methods=['POST'])
 async def send():
@@ -90,10 +95,7 @@ async def stats():
 
 
 if __name__ == '__main__':
-    # app.run(host='0.0.0.0', port=3000, debug=False)
+    app.run(host='0.0.0.0', port=3000, debug=True)
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(initialize_app())
-
-    server = WSGIApplication("app:app") 
-    server.run(host="0.0.0.0", port=3000, worker_class="gevent")
+    # server = WSGIApplication("app:app") 
+    # server.run(host="0.0.0.0", port=3000, worker_class="gevent")
