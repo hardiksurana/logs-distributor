@@ -1,66 +1,77 @@
-# import asyncio
-# import aiohttp
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status
+from pydantic import BaseModel
 import logging
-from flask import Flask, request, jsonify
+
 from distributor import Distributor
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-app = Flask(__name__)
-distributor = Distributor()
+app = FastAPI()
+distributor = None
 
-@app.route('/send_message', methods=['POST'])
-def send_message():
-    data = request.get_json()
-    if not data or 'message' not in data:
-        app.logger.error("Invalid request, missing 'message' field.")
-        return jsonify({'error': 'Invalid request, missing "message" field'}), 400
 
-    message = data['message']
-    distributor.distribute_message(message)
-    app.logger.info("Distributed message successfully.")
-    return jsonify({'status': 'Message routed successfully'}), 200 
+class SendMessageRequest(BaseModel):
+    timestamp: int
+    severity: str
+    source: str
+    message: str
 
-    # to schedule asynchronous message distribution without blocking the main request handling.
-    # asyncio.create_task(distributor.distribute_message_async(message)) 
-    # return jsonify({'status': 'Message queued for distribution'}), 200 
+class RegisterAnalyzerRequest(BaseModel):
+    id: str
+    weight: float
+    port: int
+    online: bool = True
 
-@app.route('/register_analyzer', methods=['POST'])
-def register_analyzer():
-    data = request.get_json()
-    if not data or 'id' not in data or 'weight' not in data or 'port' not in data:
-        app.logger.error("Invalid request, missing a required field.")
-        return jsonify({'error': 'Invalid request, missing a required field'}), 400
+class DeregisterAnalyzerRequest(BaseModel):
+    id: str
+    online: bool = False
 
-    analyzer_id = data.get('id')
-    weight = data.get('weight', 0)
-    port = data.get('port')
-    
-    distributor.set_analyzer({'id': analyzer_id, 'weight': weight, 'port': port,'online': True})
-    app.logger.info(f"Registered analyzer with id={analyzer_id}")
-    return jsonify({'status': 'analyzer {analyzer_id} registered'}), 200 
 
-@app.route('/deregister_analyzer', methods=['POST'])
-def deregister_analyzer():
-    data = request.get_json()
-    if not data or 'id' not in data:
-        app.logger.error("Invalid request, missing 'id' field.")
-        return jsonify({'error': 'Invalid request, missing "id" field'}), 400
+async def create_distributor():
+    distributor = Distributor()
+    await distributor.connect()
+    return distributor
 
-    analyzer_id = data['id']
 
-    distributor.set_analyzer({'id': analyzer_id, 'online': False})
-    app.logger.info(f"De-registered analyzer with id={analyzer_id}")
-    return jsonify({'status': 'analyzer {analyzer_id} de-registered'}), 200 
+@app.on_event("startup")
+async def startup_event():
+    global distributor  
+    distributor = await create_distributor()
 
-@app.route('/analyzer_stats', methods=['GET'])
-def analyzer_stats():
-    data = distributor.get_distribution_stats()
-    return jsonify(data), 200
 
-if __name__ == '__main__':
-    # distributor.set_analyzer({'id': 'analyzer_1', 'weight': 0.5, 'online': True})
-    # distributor.set_analyzer({'id': 'analyzer_2', 'weight': 0.3, 'online': True})
-    # distributor.set_analyzer({'id': 'analyzer_3', 'weight': 0.2, 'online': True})
-    
-    app.run(host='0.0.0.0', port=3000, debug=True) 
+@app.on_event("shutdown")
+async def shutdown_event():
+    global distributor
+    await distributor.close()
+    distributor = None 
+
+
+@app.post('/message/send', status_code=status.HTTP_200_OK)
+async def send(request: SendMessageRequest, background_tasks: BackgroundTasks):
+    if not request:
+        logging.error("Invalid request, missing payload.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request, missing payload.")
+
+    background_tasks.add_task(distributor.distribute_message_async, request.dict())
+    logging.info("Distributed message successfully.")
+    return {"status": "Message queued for distribution"}
+
+
+@app.post('/analyzer/register', status_code=status.HTTP_200_OK)
+async def register(request: RegisterAnalyzerRequest, background_tasks: BackgroundTasks):
+    background_tasks.add_task(distributor.set_analyzer_async, request.dict())
+    logging.info(f"Registered analyzer with id={request.id}")
+    return {"status": f"analyzer {request.id} registered"}
+
+
+@app.post('/analyzer/deregister', status_code=status.HTTP_200_OK)
+async def deregister(request: DeregisterAnalyzerRequest, background_tasks: BackgroundTasks):
+    background_tasks.add_task(distributor.set_analyzer_async, {'id': request.id, 'online': False})
+    logging.info(f"De-registered analyzer with id={request.id}")
+    return {"status": f"analyzer {request.id} de-registered"}
+
+
+@app.get('/analyzer/stats', status_code=status.HTTP_200_OK)
+async def stats():
+    data = await distributor.get_distribution_stats()
+    return data

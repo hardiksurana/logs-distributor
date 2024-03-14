@@ -1,88 +1,105 @@
-# import asyncio
-# import aiohttp
+import asyncio
+import aiohttp
+from aioredis import Redis, from_url
+from pydantic import BaseModel, Field
 import logging
-import threading
 import random
-import requests
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+class AnalyzerModel(BaseModel):
+    id: str
+    weight: float = Field(default=1.0, description="The weight of the analyzer")
+    port: int
+    online: bool = Field(default=True, description="Whether the analyzer is online")
+
+
+class MessageModel(BaseModel):
+    timestamp: int
+    severity: str
+    source: str
+    message: str
+
+
 class Distributor:
-    def __init__(self):
-        self.analyzers = [] 
-        self.message_counts = []
-        self.total_message_count = 0
-        self.total_weight = 0
+    def __init__(self, redis_host='redis', redis_port=6379, redis_db=0):
+        self._redis_url = f"redis://{redis_host}:{redis_port}/{redis_db}"
+        self._redis: Redis = None
+        self._lock = asyncio.Lock()
+        self._session = aiohttp.ClientSession()
+
+    
+    async def connect(self):
+        self._redis = await from_url(self._redis_url, encoding="utf-8", decode_responses=True)
+
+
+    async def close(self):
+        await self._redis.close()
+        await self._session.close()
         
-        self._analyzers_lock = threading.Lock()
-        self._message_lock = threading.Lock()
 
-    def set_analyzer(self, new_analyzer):
-        """ Registers a new analyzer with the distributor """
-        with self._analyzers_lock:
-            found = False
-            for i, analyzer in enumerate(self.analyzers):
-                if analyzer['id'] == new_analyzer['id']:
-                    found = True
-                    if not new_analyzer['online']:
-                        self.analyzers[i]['online'] = False
-                    else:
-                        self.analyzers[i] = new_analyzer
-                    break
+    async def set_analyzer_async(self, analyzer_data: dict):
+        """ Registers a new analyzer with the Distributor """
+        analyzer_id = analyzer_data['id']
+        
+        async with self._lock:
+            if not analyzer_data.get('online', False):
+                await self._redis.delete(f"analyzer:{analyzer_id}")
+                await self._redis.delete(f"message_count:{analyzer_id}")
+            else:
+                analyzer_data.pop('online', None)
+                await self._redis.hset(f"analyzer:{analyzer_id}", mapping=analyzer_data)
+                await self._redis.set(f"message_count:{analyzer_id}", 0)
             
-            if not found:
-                self.analyzers.append(new_analyzer)
+            # reset message counts
+            keys = await self._redis.keys("message_count:*")
+            await asyncio.gather(*(self._redis.set(key, 0) for key in keys))
             
-            # reset total weight and message stats
-            self.total_weight = sum(analyzer['weight'] for analyzer in self.analyzers if analyzer['online'] == True)
-            self.message_counts = [0] * len(self.analyzers)
-            self.total_message_count = 0
+            # reset weights           
+            analyzer_keys = await self._redis.keys("analyzer:*")
+            total_weight = sum([float(await self._redis.hget(key, 'weight')) for key in analyzer_keys])
+            await self._redis.set("total_weight", total_weight)
+            await self._redis.set("total_message_count", 0)
 
-    # async def distribute_message_async(self, message):
-    #     async with aiohttp.ClientSession() as session:  # for managing asynchronous HTTP connections.
-    #         for analyzer_id, weight in self.analyzers.items():
-    #             analyzer_url = f"http://{analyzer_id}:5001/receive_message" 
-    #             try:
-    #                 #  for asynchronous HTTP requests and resource management.
-    #                 async with session.post(analyzer_url, json={"message": message}) as response:
-    #                     response.raise_for_status()  
-    #                     print(f"Message sent to analyzer {analyzer_id} (weight: {weight})")
-    #             except aiohttp.ClientError as e:
-    #                 print(f"Error sending message to analyzer {analyzer_id}: {e}")
-
-    def distribute_message(self, message):
-        """ Distributes a log message among analyzers based on the predefined weights """
-        with self._message_lock:
-            self.total_message_count += 1
-            
-            random_value = random.random() * self.total_weight
-            current_weight = 0
-
-            for i, analyzer in enumerate(self.analyzers):
-                if not analyzer['online']:
-                    continue
+    
+    async def distribute_message_async(self, message: dict):
+        """Distributes a log message among Analyzers asynchronously based on the pre-defined weights"""
+        total_weight = await self._redis.get("total_weight")
+        random_value = random.random() * float(total_weight)
+        current_weight = 0.0
+        
+        keys = await self._redis.keys("analyzer:*")
+        for key in keys:
+            analyzer = await self._redis.hgetall(key)
+            current_weight += float(analyzer['weight'])
+            if current_weight >= random_value:
+                async with self._lock:
+                    await self._redis.incr(f"message_count:{analyzer['id']}")
+                    await self._redis.incr("total_message_count")
                 
-                current_weight += analyzer['weight']
-                if current_weight >= random_value:
-                    self.message_counts[i] += 1
-                    self.route_message(self.analyzers[i]['id'], self.analyzers[i]['port'], message)
-                    break
-    
-    def route_message(self, analyzer_id, port, message):
-        """ Forwards the log to the analyzer """
-        analyzer_url = f"http://{analyzer_id}:{port}/receive_message"
-        logger.info("Sending POST request to {analyzer_url}")
-        try:
-            response = requests.post(analyzer_url, json={"message": message})
-            response.raise_for_status()
-            logger.info(f"Message sent to analyzer {analyzer_id}. Status = {response.status_code}")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error sending message to analyzer {analyzer_id}: {e}")
-    
-    def get_distribution_stats(self):
-        data = []
-        for i in range(len(self.analyzers)):
-            data.append({"id": self.analyzers[i]['id'], "online": self.analyzers[i]['online'], "weight": self.analyzers[i]['weight'], "total_messages_sent": self.message_counts[i]})
+                # send message to analyzer asynchronously
+                analyzer_url = f"http://{analyzer['id']}:{analyzer['port']}/message/process"
+                try:
+                    async with self._session.post(analyzer_url, json={"data": message}) as response:
+                        response.raise_for_status()
+                        logger.info(f"Message response status: {response.status}")
+                except aiohttp.ClientError as e:
+                    logger.error(f"Error sending message to analyzer: {e}")
+                except asyncio.TimeoutError:
+                    logger.error(f"Timeout occurred while sending message to analyzer")
         
-        return data
+                break
+    
+
+    async def get_distribution_stats(self):
+        analyzers = []
+        keys = await self._redis.keys("analyzer:*")
+        
+        for key in keys:
+            data = await self._redis.hgetall(key)
+            message_count = await self._redis.get(f"message_count:{data['id']}")
+            data['messages_sent'] = int(message_count) if message_count else 0
+            analyzers.append(data)
+        
+        return analyzers
