@@ -7,7 +7,7 @@ from distributor import Distributor
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 app = FastAPI()
-distributor = Distributor()
+distributor = None
 
 
 class SendMessageRequest(BaseModel):
@@ -27,14 +27,23 @@ class DeregisterAnalyzerRequest(BaseModel):
     online: bool = False
 
 
+async def create_distributor():
+    distributor = Distributor()
+    await distributor.connect()
+    return distributor
+
+
 @app.on_event("startup")
 async def startup_event():
-    await distributor.connect()
+    global distributor  
+    distributor = await create_distributor()
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    global distributor
     await distributor.close()
+    distributor = None 
 
 
 @app.post('/message/send', status_code=status.HTTP_200_OK)
